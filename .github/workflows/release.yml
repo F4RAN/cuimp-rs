@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggered when pushing v* tags (e.g., v1.3.0)
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Run tests
+        run: npm run test:run
+        
+      - name: Build
+        run: npm run build
+        
+      - name: Create Release Archive
+        run: |
+          mkdir -p release
+          cp -r dist release/
+          cp package.json release/
+          cp package-lock.json release/
+          cp README.md release/
+          cp LICENSE release/ 2>/dev/null || true
+          cd release
+          tar -czf ../cuimp-ts-${{ github.ref_name }}.tar.gz .
+          
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: cuimp-ts-v${{ github.ref_name }}.tar.gz
+          generate_release_notes: true
+          body: |
+            ## Installation Methods
+            
+            ### Recommended: Install directly from GitHub
+            
+            npm will automatically build from source (via prepare script):
+            
+            ```bash
+            npm install github:F4RAN/cuimp-ts#${{ github.ref_name }}
+            ```
+            
+            Or in `package.json`:
+            
+            ```json
+            {
+              "dependencies": {
+                "cuimp": "github:F4RAN/cuimp-ts#${{ github.ref_name }}"
+              }
+            }
+            ```
+            
+            ### Alternative: Manual installation (pre-built)
+            
+            If you don't want automatic building, download `cuimp-ts-${{ github.ref_name }}.tar.gz` (includes dist):
+            
+            ```bash
+            wget https://github.com/F4RAN/cuimp-ts/releases/download/${{ github.ref_name }}/cuimp-ts-${{ github.ref_name }}.tar.gz
+            tar -xzf cuimp-ts-${{ github.ref_name }}.tar.gz -C ./cuimp
+            npm install ./cuimp
+            ```
+            
+            ## New Features
+            
+            - ✨ Raw buffer support (GBK and other non-UTF-8 encodings)
+            - 🔧 Improved response parsing (handles delimiters in body)
+            - 🍪 extraCurlArgs support (cookie jar and other custom parameters)
+            - 🔀 Fixed multiple redirect handling
+            - 📦 Automatic build (on npm install)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
