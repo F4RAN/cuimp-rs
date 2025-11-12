@@ -320,6 +320,17 @@ fn parse_response<T>(
 where
     T: serde::de::DeserializeOwned,
 {
+    // Early return if stdout is too short to contain HTTP/ marker
+    if stdout.len() < 5 {
+        let preview = String::from_utf8_lossy(stdout);
+        return Err(CuimpError::InvalidResponse(format!(
+            "Empty or too short response from curl-impersonate ({} bytes). \
+             This usually means:\n  - Connection failed\n  - Proxy unreachable\n  - Timeout\n  - Invalid URL\n\nOutput: {}",
+            stdout.len(),
+            preview
+        )));
+    }
+
     // Find all HTTP/ markers
     let http_marker = b"HTTP/";
     let mut http_starts = Vec::new();
@@ -446,5 +457,89 @@ where
             serde_json::from_value(Value::String(text.to_string()))
                 .map_err(|e| CuimpError::JsonError(e))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_response_empty_stdout() {
+        let empty: &[u8] = &[];
+        let result = parse_response::<serde_json::Value>(
+            empty,
+            "https://example.com",
+            &Method::GET,
+            &HashMap::new(),
+            "curl ...",
+        );
+        assert!(result.is_err());
+        // Should return InvalidResponse error, not panic
+        match result {
+            Err(CuimpError::InvalidResponse(msg)) => {
+                assert!(msg.contains("Empty or too short response"));
+                assert!(msg.contains("0 bytes"));
+            }
+            _ => panic!("Expected InvalidResponse error"),
+        }
+    }
+
+    #[test]
+    fn test_parse_response_too_short_stdout() {
+        // Test with stdout shorter than 5 bytes
+        let short: &[u8] = b"123";
+        let result = parse_response::<serde_json::Value>(
+            short,
+            "https://example.com",
+            &Method::GET,
+            &HashMap::new(),
+            "curl ...",
+        );
+        assert!(result.is_err());
+        match result {
+            Err(CuimpError::InvalidResponse(msg)) => {
+                assert!(msg.contains("Empty or too short response"));
+                assert!(msg.contains("3 bytes"));
+            }
+            _ => panic!("Expected InvalidResponse error"),
+        }
+    }
+
+    #[test]
+    fn test_parse_response_valid_http_response() {
+        // Test with a valid HTTP response
+        let valid_response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"key\":\"value\"}";
+        let result = parse_response::<serde_json::Value>(
+            valid_response,
+            "https://example.com",
+            &Method::GET,
+            &HashMap::new(),
+            "curl ...",
+        );
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.status, 200);
+        assert_eq!(response.status_text, "OK");
+    }
+
+    #[test]
+    fn test_parse_response_no_http_marker() {
+        // Test with stdout that has 5+ bytes but no HTTP/ marker
+        let no_http: &[u8] = b"Hello World";
+        let result = parse_response::<serde_json::Value>(
+            no_http,
+            "https://example.com",
+            &Method::GET,
+            &HashMap::new(),
+            "curl ...",
+        );
+        assert!(result.is_err());
+        match result {
+            Err(CuimpError::InvalidResponse(msg)) => {
+                assert!(msg.contains("No HTTP response found"));
+            }
+            _ => panic!("Expected InvalidResponse error"),
+        }
     }
 }

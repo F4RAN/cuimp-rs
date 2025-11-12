@@ -14,7 +14,8 @@
 //! # Examples
 //!
 //! ```no_run
-//! use cuimp::{get, post, CuimpHttp, Cuimp, CuimpDescriptor};
+//! use cuimp::{get, post, CuimpHttp, Cuimp, CuimpDescriptor, CuimpResponse};
+//! use serde_json::Value;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,8 +36,8 @@
 //!         version: Some("123".to_string()),
 //!         ..Default::default()
 //!     };
-//!     let client = CuimpHttp::new(descriptor)?;
-//!     let response = client.get("https://api.example.com/users").await?;
+//!     let mut client = CuimpHttp::new(descriptor.into())?;
+//!     let response: CuimpResponse<Value> = client.get("https://api.example.com/users").await?;
 //!
 //!     Ok(())
 //! }
