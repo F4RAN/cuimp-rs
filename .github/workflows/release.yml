@@ -3,85 +3,174 @@ name: Release
 on:
   push:
     tags:
-      - 'v*' # Triggered when pushing v* tags (e.g., v1.3.0)
+      - 'v*' # Triggered when pushing v* tags (e.g., v1.0.0)
 
 jobs:
   build-and-release:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: cuimp-rs-linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: cuimp-rs-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: cuimp-rs-macos-aarch64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: cuimp-rs-windows-x86_64
+
+    runs-on: ${{ matrix.os }}
     permissions:
       contents: write
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: '20'
-          
-      - name: Install dependencies
-        run: npm ci
-        
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Run tests
-        run: npm run test:run
-        
-      - name: Build
-        run: npm run build
-        
-      - name: Create Release Archive
+        run: cargo test --target ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Create release archive (Unix)
+        if: matrix.os != 'windows-latest'
         run: |
           mkdir -p release
-          cp -r dist release/
-          cp package.json release/
-          cp package-lock.json release/
+          cp target/${{ matrix.target }}/release/libcuimp.* release/ 2>/dev/null || true
           cp README.md release/
-          cp LICENSE release/ 2>/dev/null || true
+          cp LICENSE release/
+          cp Cargo.toml release/
           cd release
-          tar -czf ../cuimp-ts-${{ github.ref_name }}.tar.gz .
-          
+          tar -czf ../${{ matrix.artifact_name }}-${{ github.ref_name }}.tar.gz .
+
+      - name: Create release archive (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir release
+          cp target/${{ matrix.target }}/release/cuimp.lib release/ 2>$null
+          cp target/${{ matrix.target }}/release/cuimp.dll release/ 2>$null
+          cp README.md release/
+          cp LICENSE release/
+          cp Cargo.toml release/
+          cd release
+          tar -czf ../${{ matrix.artifact_name }}-${{ github.ref_name }}.tar.gz .
+        shell: pwsh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}-${{ github.ref_name }}.tar.gz
+
+  create-release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: cuimp-ts-v${{ github.ref_name }}.tar.gz
+          files: artifacts/**/*.tar.gz
           generate_release_notes: true
           body: |
-            ## Installation Methods
-            
-            ### Recommended: Install directly from GitHub
-            
-            npm will automatically build from source (via prepare script):
-            
-            ```bash
-            npm install github:F4RAN/cuimp-ts#${{ github.ref_name }}
+            ## Installation
+
+            ### Using Cargo
+
+            Add to your `Cargo.toml`:
+
+            ```toml
+            [dependencies]
+            cuimp = "0.1"
+            tokio = { version = "1", features = ["full"] }
             ```
-            
-            Or in `package.json`:
-            
-            ```json
-            {
-              "dependencies": {
-                "cuimp": "github:F4RAN/cuimp-ts#${{ github.ref_name }}"
-              }
+
+            Or install from GitHub:
+
+            ```toml
+            [dependencies]
+            cuimp = { git = "https://github.com/F4RAN/cuimp-rs", tag = "${{ github.ref_name }}" }
+            ```
+
+            ### Pre-built binaries
+
+            Download the appropriate archive for your platform:
+
+            - **Linux (x86_64)**: `cuimp-rs-linux-x86_64-${{ github.ref_name }}.tar.gz`
+            - **macOS (Intel)**: `cuimp-rs-macos-x86_64-${{ github.ref_name }}.tar.gz`
+            - **macOS (Apple Silicon)**: `cuimp-rs-macos-aarch64-${{ github.ref_name }}.tar.gz`
+            - **Windows (x86_64)**: `cuimp-rs-windows-x86_64-${{ github.ref_name }}.tar.gz`
+
+            Extract and use the library files in your Rust project.
+
+            ## Quick Start
+
+            ```rust
+            use cuimp::{get, post};
+            use serde_json::json;
+
+            #[tokio::main]
+            async fn main() -> Result<(), Box<dyn std::error::Error>> {
+                // Simple GET request
+                let response = get("https://httpbin.org/headers").await?;
+                println!("Response: {:?}", response.data);
+
+                // POST with data
+                let data = json!({"name": "John Doe"});
+                let response = post("https://httpbin.org/post", Some(data)).await?;
+                println!("Response: {:?}", response.data);
+
+                Ok(())
             }
             ```
-            
-            ### Alternative: Manual installation (pre-built)
-            
-            If you don't want automatic building, download `cuimp-ts-${{ github.ref_name }}.tar.gz` (includes dist):
-            
-            ```bash
-            wget https://github.com/F4RAN/cuimp-ts/releases/download/${{ github.ref_name }}/cuimp-ts-${{ github.ref_name }}.tar.gz
-            tar -xzf cuimp-ts-${{ github.ref_name }}.tar.gz -C ./cuimp
-            npm install ./cuimp
-            ```
-            
-            ## New Features
-            
-            - ✨ Raw buffer support (GBK and other non-UTF-8 encodings)
-            - 🔧 Improved response parsing (handles delimiters in body)
-            - 🍪 extraCurlArgs support (cookie jar and other custom parameters)
-            - 🔀 Fixed multiple redirect handling
-            - 📦 Automatic build (on npm install)
+
+            ## Features
+
+            - 🚀 Browser Impersonation (Chrome, Firefox, Safari, Edge)
+            - 🔧 Easy to Use API
+            - 📦 Zero Runtime Dependencies
+            - 🎯 Full Type Safety
+            - 🔄 Auto Binary Management
+            - 🌐 Cross-Platform Support
+            - 🔒 Proxy Support (HTTP, HTTPS, SOCKS)
+            - ⚡ Async/Await with Tokio
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
