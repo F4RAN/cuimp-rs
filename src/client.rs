@@ -113,7 +113,7 @@ impl CuimpHttp {
                 serde_json::to_string(data)?
             };
 
-            args.push("--data-binary".to_string());
+            args.push("--data-raw".to_string());
             args.push(body);
 
             // Add Content-Type if not present
